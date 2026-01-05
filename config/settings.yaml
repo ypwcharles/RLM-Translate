@@ -1,0 +1,46 @@
+# DeepTrans-RLM Global Settings
+# Version: 1.0.0
+
+# === Token Thresholds (Based on PRD v2) ===
+tokens:
+  max_output_tokens: 21000          # Gemini 3 输出安全上限
+  source_chunk_threshold: 200000    # 以章节为单位，不超过 200K tokens
+  context_window: 2000000           # Gemini 3 Pro 超长上下文窗口
+
+# === Translation Settings ===
+translation:
+  source_language: "English"
+  target_language: "Chinese"
+  max_collaboration_iterations: 2   # Addition-by-Subtraction 最大迭代次数
+  plot_summary_window: 10           # 保留最近 N 章的剧情摘要
+
+# === Chapter Detection ===
+chunking:
+  chapter_patterns:
+    - "^\\s*第[一二三四五六七八九十百千万\\d]+章.*$"
+    - "^\\s*Chapter\\s+\\d+.*$"
+    - "^\\s*CHAPTER\\s+\\d+.*$"
+    - "^\\s*Prologue.*$"
+    - "^\\s*Epilogue.*$"
+  paragraph_separator: "\n\n"
+
+# === Output Directories ===
+output:
+  translation_dir: "./output/translations"
+  debug_dir: "./debug_output"
+  checkpoint_dir: "./checkpoints"
+
+# === Debug Mode ===
+debug:
+  enabled: false
+  save_prompts: true
+  save_responses: true
+  snapshot_interval: 1
+  verbose_logging: false
+  dry_run: false
+
+# === Logging ===
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "./logs/translation.log"

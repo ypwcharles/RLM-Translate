@@ -1,0 +1,48 @@
+# DeepTrans-RLM Model Configuration
+# Version: 1.0.0
+# Based on PRD v2: Gemini 3 Series
+
+# === Model Definitions ===
+models:
+  # Analyzer - 全书扫描，术语/人物/剧情提取
+  analyzer:
+    name: "gemini-2.0-flash"
+    temperature: 1.0
+    purpose: "全书扫描，术语/人物/剧情提取"
+    context_window: 1000000
+
+  # Drafter (Addition Agent) - 高速初翻
+  drafter:
+    name: "gemini-2.0-flash"
+    temperature: 1.0
+    purpose: "高速初翻 (Addition Agent)"
+
+  # Critic (Subtraction Agent) - 深度审查
+  critic:
+    name: "gemini-2.0-flash"
+    temperature: 1.0
+    purpose: "深度审查 (Subtraction Agent)"
+
+  # Editor - 润色定稿
+  editor:
+    name: "gemini-2.0-flash"
+    temperature: 1.0
+    purpose: "润色定稿"
+
+# === Safety Settings ===
+# 文学翻译必须禁用内容过滤
+safety_settings:
+  harassment: "BLOCK_NONE"
+  hate_speech: "BLOCK_NONE"
+  sexually_explicit: "BLOCK_NONE"
+  dangerous_content: "BLOCK_NONE"
+
+# === API Configuration ===
+api:
+  # Rate limiting
+  max_retries: 3
+  retry_min_wait: 4
+  retry_max_wait: 60
+  
+  # Timeout
+  request_timeout: 120
