@@ -39,6 +39,12 @@ safety_settings:
 
 # === API Configuration ===
 api:
+  # DMXAPI 中转站配置（推荐使用）
+  dmxapi:
+    base_url: "https://www.dmxapi.cn"
+    # 密钥请设置环境变量 DMXAPI_KEY
+    # 或在调用时传入 api_key 参数
+    
   # Rate limiting
   max_retries: 3
   retry_min_wait: 4
@@ -46,3 +52,8 @@ api:
   
   # Timeout
   request_timeout: 120
+
+# === 环境变量说明 ===
+# DMXAPI_KEY: DMXAPI 中转站密钥（格式: sk-xxx）
+# DMXAPI_BASE_URL: 自定义中转站地址（可选）
+# GOOGLE_API_KEY: 原生 Google API 密钥（备用）
