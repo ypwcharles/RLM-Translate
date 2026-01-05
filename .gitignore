@@ -40,6 +40,7 @@ output/
 checkpoints/
 logs/
 *.log
+data/source/
 
 # OS
 .DS_Store
