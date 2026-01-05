@@ -19,6 +19,13 @@ from typing import Optional
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# 自动加载 .env 文件
+try:
+    from dotenv import load_dotenv
+    load_dotenv(project_root / ".env")
+except ImportError:
+    pass  # python-dotenv 未安装则跳过
+
 from src.core.state import create_initial_state
 from src.core.chunker import ChunkerConfig
 from src.graphs.main_graph import create_main_graph
@@ -220,6 +227,7 @@ Examples:
             api_key=args.api_key,
             source_lang=args.source_lang,
             target_lang=args.target_lang,
+            debugger=debugger,
         )
     except Exception as e:
         logger.error(f"Failed to initialize translation graph: {e}")

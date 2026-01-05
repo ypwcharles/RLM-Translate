@@ -26,19 +26,21 @@ DEFAULT_TEMPERATURE = 1.0
 DMXAPI_BASE_URL = "https://www.dmxapi.cn"
 
 
-def get_safety_settings() -> Dict[HarmCategory, HarmBlockThreshold]:
+
+def get_safety_settings() -> Dict[str, str]:
     """获取文学翻译所需的安全设置。
     
     所有类别设为 BLOCK_NONE，以防止文学内容触发审查。
+    为了兼容性，使用字符串形式。
     
     Returns:
         安全设置字典
     """
     return {
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
+        "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
+        "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
     }
 
 
@@ -64,13 +66,6 @@ def create_llm_client(
         
     Returns:
         配置好的 LLM 客户端
-        
-    Example:
-        # 使用 DMXAPI 中转站
-        >>> client = create_llm_client("gemini-2.0-flash")
-        
-        # 使用原生 Google API
-        >>> client = create_llm_client("gemini-2.0-flash", use_dmxapi=False)
     """
     if api_key is None:
         # 优先使用 DMXAPI 密钥
@@ -89,14 +84,19 @@ def create_llm_client(
         **kwargs,
     }
     
-    # 如果使用 DMXAPI 中转站，配置 transport
+    # 如果使用 DMXAPI 中转站
     if base_url:
-        # LangChain Google GenAI 支持通过 client_options 配置 base_url
-        # 但更可靠的方式是设置环境变量或使用 transport
-        client_kwargs["transport"] = "rest"
+        # 设置 client_options 以支持自定义 endpoint
+        # 注意: ChatGoogleGenerativeAI 可能会将 client_options 传递给底层客户端
+        if "client_options" not in client_kwargs:
+            client_kwargs["client_options"] = {"api_endpoint": base_url}
+        else:
+            client_kwargs["client_options"]["api_endpoint"] = base_url
+            
+        # 移除显式的 transport 参数，因为它会导致 Warning 且通常不是必需的
+        # client_kwargs["transport"] = "rest"
         
-        # 设置环境变量以覆盖默认 API 端点
-        # 注意：这会影响全局设置
+        # 同时设置环境变量作为后备
         os.environ["GOOGLE_AI_STUDIO_API_ENDPOINT"] = base_url
         
     return ChatGoogleGenerativeAI(**client_kwargs)
@@ -250,6 +250,7 @@ class LLMClientManager:
         base_url: Optional[str] = None,
         use_dmxapi: bool = True,
         model_overrides: Optional[Dict[str, str]] = None,
+        timeout: Optional[int] = None,
     ):
         """初始化客户端管理器。
         
@@ -263,6 +264,7 @@ class LLMClientManager:
         self.base_url = base_url
         self.use_dmxapi = use_dmxapi
         self.model_overrides = model_overrides or {}
+        self.timeout = timeout
         
         self._analyzer: Optional[ChatGoogleGenerativeAI] = None
         self._drafter: Optional[ChatGoogleGenerativeAI] = None
@@ -280,6 +282,7 @@ class LLMClientManager:
             api_key=self.api_key,
             base_url=self.base_url,
             use_dmxapi=self.use_dmxapi,
+            request_timeout=self.timeout,
         )
         
     @property

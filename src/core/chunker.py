@@ -23,11 +23,11 @@ class ChunkerConfig:
     def __post_init__(self):
         if self.chapter_patterns is None:
             self.chapter_patterns = [
-                r'^第[一二三四五六七八九十百千万\d]+章.*$',
-                r'^Chapter\s+\d+.*$',
-                r'^CHAPTER\s+\d+.*$',
-                r'^Prologue.*$',
-                r'^Epilogue.*$',
+                r'^#*\s*第[一二三四五六七八九十百千万\d]+章.*$',
+                r'^#*\s*Chapter\s+.*$',  # 匹配 "Chapter 1" 或 "Chapter One"
+                r'^#*\s*CHAPTER\s+.*$',
+                r'^#*\s*Prologue.*$',
+                r'^#*\s*Epilogue.*$',
             ]
 
 

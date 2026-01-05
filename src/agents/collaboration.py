@@ -88,15 +88,26 @@ class TranslationCollaboration:
         for iteration in range(self.max_iterations):
             iterations_used = iteration + 1
             
-            # Step 1: Drafter 产出初稿
+            # Step 1: Drafter 产出初稿 (或使用 Patch 后的稿件)
             logger.info(f"Chunk {chunk_index}: Drafter iteration {iteration + 1}")
             
-            history = [t.content for t in memory.get_history()]
-            draft = await self.drafter.process(
-                source_text=source_text,
-                context=context,
-                history=history if history else None,
-            )
+            non_local_draft_update = False
+            
+            # 检查是否有 Patch 后的 Draft (logic implemented inside loop end)
+            # 这里需要一个状态变量，但由于 python 作用域，我们直接检查 draft 是否被修改且标记
+            
+            if locals().get("use_patched_draft", False):
+                logger.info(f"Chunk {chunk_index}: Using patched draft, skipping regeneration.")
+                # draft is already updated
+                use_patched_draft = False
+            else:
+                history = [t.content for t in memory.get_history()]
+                draft = await self.drafter.process(
+                    source_text=source_text,
+                    context=context,
+                    history=history if history else None,
+                )
+            
             
             memory.add_turn("drafter", draft)
             
@@ -133,6 +144,7 @@ class TranslationCollaboration:
             if self.critic.check_convergence(critique):
                 logger.info(f"Chunk {chunk_index}: Converged at iteration {iteration + 1}")
                 break
+
                 
         # Phase 2: Editor 最终润色
         logger.info(f"Chunk {chunk_index}: Editor finalizing")
@@ -191,12 +203,17 @@ class TranslationCollaboration:
             
             logger.info(f"Chunk {chunk_index}: Drafter iteration {iteration + 1}")
             
-            history = [t.content for t in memory.get_history()]
-            draft = self.drafter.process_sync(
-                source_text=source_text,
-                context=context,
-                history=history if history else None,
-            )
+            if locals().get("use_patched_draft", False):
+                logger.info(f"Chunk {chunk_index}: Using patched draft, skipping regeneration.")
+                use_patched_draft = False
+            else:
+                history = [t.content for t in memory.get_history()]
+                draft = self.drafter.process_sync(
+                    source_text=source_text,
+                    context=context,
+                    history=history if history else None,
+                )
+            
             
             memory.add_turn("drafter", draft)
             

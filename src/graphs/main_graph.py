@@ -14,45 +14,33 @@ from langgraph.graph import StateGraph, END
 
 from ..core.state import TranslationState, update_state, create_initial_state, ChunkInfo
 from ..core.rlm_context import RLMContext
-from ..core.chunker import TextChunker, ChunkerConfig
+from ..core.rlm_context import RLMContext
+from ..core.chunker import TextChunker, ChunkerConfig, ChunkInfo
+from ..core.structure_scanner import StructureScanner
 from ..core.client import LLMClientManager
 from ..agents.drafter import DrafterAgent
 from ..agents.critic import CriticAgent
 from ..agents.editor import EditorAgent
+from ..agents.editor import EditorAgent
 from .translation_subgraph import TranslationSubgraph
+from ..utils.debugger import TranslationDebugger
 
 
 logger = logging.getLogger(__name__)
 
 
 # 术语提取 Prompt
-ANALYZER_PROMPT = """You are an expert literary analyst. Your task is to scan the following text and extract all important terminology, proper nouns, and invented terms that need consistent translation.
+from pathlib import Path
 
-## Text to Analyze
-{text}
+# 获取 prompts 目录的绝对路径
+PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
+ANALYZER_PROMPT_FILE = PROMPTS_DIR / "analyzer.txt"
 
-## Instructions
-1. Identify ALL proper nouns (character names, place names, organization names)
-2. Identify invented terms, fictional concepts, and world-specific vocabulary
-3. Identify recurring important phrases that should be translated consistently
-4. For each term, suggest an appropriate Chinese translation
-
-## Output Format
-Return a JSON object with the following structure:
-{{
-    "glossary": {{
-        "English term": "Chinese translation",
-        ...
-    }},
-    "characters": {{
-        "Character Name": "Brief description",
-        ...
-    }},
-    "book_summary": "A 2-3 sentence summary of the text"
-}}
-
-Return ONLY the JSON object, no additional text or markdown.
-"""
+# 加载 Analyzer Prompt
+if ANALYZER_PROMPT_FILE.exists():
+    ANALYZER_PROMPT = ANALYZER_PROMPT_FILE.read_text(encoding="utf-8")
+else:
+    ANALYZER_PROMPT = "Error: Analyzer prompt file not found."
 
 
 class MainGraph:
@@ -69,6 +57,7 @@ class MainGraph:
         chunker: 文本切分器
         translation_subgraph: 翻译子图
         graph: 编译后的工作流
+        debugger: 调试器 (Optional)
     """
     
     def __init__(
@@ -77,7 +66,8 @@ class MainGraph:
         chunker_config: Optional[ChunkerConfig] = None,
         max_iterations: int = 2,
         source_lang: str = "English",
-        target_lang: str = "Chinese",
+        target_lang: str = "Simplified Chinese",
+        debugger: Optional[TranslationDebugger] = None,
     ):
         """初始化主图。
         
@@ -90,9 +80,12 @@ class MainGraph:
         """
         self.client_manager = client_manager
         self.chunker = TextChunker(chunker_config)
+        self.scanner = StructureScanner()
         self.source_lang = source_lang
         self.target_lang = target_lang
+        self.target_lang = target_lang
         self.max_iterations = max_iterations
+        self.debugger = debugger
         
         # 创建 Agent
         self._drafter = DrafterAgent(
@@ -110,7 +103,6 @@ class MainGraph:
             source_lang=source_lang,
             target_lang=target_lang,
         )
-        
         # 创建翻译子图
         self.translation_subgraph = TranslationSubgraph(
             drafter=self._drafter,
@@ -131,43 +123,185 @@ class MainGraph:
             
             raw_text = state["raw_text"]
             
-            # 构建分析 Prompt
-            # 对于超长文本，可能需要分段分析
-            sample_length = min(len(raw_text), 100000)  # 取样分析
+            # 1. 运行结构扫描
+            skeleton = self.scanner.scan(raw_text)
+            
+            # 将骨架转换为字符串供 Prompt 使用 (只取前 2000 个节点以防超限? 
+            # 实际上 skeleton 很轻，全书一般也就在 context window 内)
+            # 我们将其格式化为 Line: Content
+            skeleton_text = ""
+            for node in skeleton:
+                if node['type'] == 'header_candidate':
+                    skeleton_text += f"[L{node['line_number']}] {node['content_preview']}\n"
+                elif node['type'] == 'empty':
+                     pass # 忽略空行以节省 Prompt? 或者用 [GAP] 标记?
+                     # skeleton_text += f"[L{node['line_number']}] [GAP]\n"
+                else:
+                    # Text block start
+                    skeleton_text += f"[L{node['line_number']}] {node['content_preview']} ({node['length']} chars)\n"
+
+            # 2. 构建分析 Prompt
+            # 取样正文用于风格分析 (前 5000 字符)
+            sample_length = min(len(raw_text), 5000)
             sample_text = raw_text[:sample_length]
             
-            prompt = ANALYZER_PROMPT.format(text=sample_text)
+            prompt = ANALYZER_PROMPT.format(
+                text=sample_text,
+                structural_skeleton=skeleton_text
+            )
             
+            # Debug Log: Analyzer Prompt
+            if self.debugger:
+                self.debugger.save_prompt(
+                    agent_name="analyzer",
+                    prompt=prompt,
+                    chunk_index=-1, # Global analysis
+                    metadata={"skeleton_length": len(skeleton_text)}
+                )
+
             # 调用分析器
             response = self.client_manager.analyzer.invoke(prompt)
             content = response.content
+
+            # Debug Log: Analyzer Response
+            if self.debugger:
+                self.debugger.save_response(
+                    agent_name="analyzer",
+                    response=str(content),
+                    chunk_index=-1
+                )
+            
+            # 处理列表类型的 content (Gemini 3 可能返回多模态格式)
+            if isinstance(content, list):
+                if all(isinstance(x, str) for x in content):
+                    content = "".join(content)
+                else:
+                    # 尝试从字典列表提取文本 (OpenAI style / Anthropic style compatibility)
+                    text_parts = []
+                    for part in content:
+                        if isinstance(part, str):
+                            text_parts.append(part)
+                        elif hasattr(part, "get"):
+                            text_parts.append(part.get("text", ""))
+                    content = "".join(text_parts)
             
             # 解析 JSON 响应
+            # 解析 JSON 响应
             try:
-                # 尝试提取 JSON
-                json_match = re.search(r'\{[\s\S]*\}', content)
-                if json_match:
-                    data = json.loads(json_match.group())
-                else:
-                    data = {}
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse analyzer response as JSON")
+                data = {}
+                # 1. 优先尝试提取 Markdown 代码块
+                code_block_match = re.search(r"```json\s*(.*?)```", content, re.DOTALL)
+                if code_block_match:
+                     try:
+                        data = json.loads(code_block_match.group(1).strip())
+                     except json.JSONDecodeError:
+                        logger.warning("Failed to parse JSON from markdown code block, falling back to heuristic search.")
+
+                # 2. 如果代码块解析失败，尝试启发式提取
+                if not data:
+                    # 寻找最外层的 {}
+                    # stack based approach or simple greedy search?
+                    # Greedy search from first { to last } is usually fine if no other braces exist in preamble
+                    json_match = re.search(r'\{[\s\S]*\}', content)
+                    if json_match:
+                        try:
+                            data = json.loads(json_match.group())
+                        except json.JSONDecodeError:
+                             logger.warning("Failed to parse analyzer response as JSON (heuristic)")
+                    else:
+                        logger.warning("No JSON object found in analyzer response")
+
+            except Exception as e:
+                logger.error(f"Error during JSON parsing: {e}")
                 data = {}
                 
+            # 清洗 Glossary：去除拼音和注释
+            cleaned_glossary = {}
+            for k, v in data.get("glossary", {}).items():
+                # 去除括号及其内容 (e.g., "Term (Pinyin)" -> "Term")
+                clean_v = re.sub(r'\s*\(.*?\)', '', v).strip()
+                # 转换由 Gemini 可能输出的繁体到简体 (虽然 Prompt 要求了，但为了保险)
+                # 这里暂时依赖 LLM 的修正，因为引入专门的简繁转换库可能太重
+                # 但去除干扰字符是最重要的
+                cleaned_glossary[k] = clean_v
+
             return {
-                "glossary": data.get("glossary", {}),
+                "glossary": cleaned_glossary,
                 "character_profiles": data.get("characters", {}),
                 "book_summary": data.get("book_summary", ""),
+                "chunk_plan": data.get("chunks", []),
+                "formatted_skeleton": skeleton, # 保存原始骨架供后续映射使用
             }
             
         def chunk_node(state: TranslationState) -> Dict:
-            """Chunker 节点：切分文本。"""
+            """Chunker 节点：切分文本。
+            
+            优先尝试执行 Analyzer 的 Semantic Chunk Plan。
+            如果 Plan 无效或缺失，回退到 Regex Chunker。
+            """
             logger.info("[MainGraph] Chunking text...")
             
             raw_text = state["raw_text"]
-            chunks = self.chunker.plan_chunks(raw_text)
+            chunk_plan = state.get("chunk_plan", [])
+            formatted_skeleton = state.get("formatted_skeleton", [])
             
-            logger.info(f"[MainGraph] Created {len(chunks)} chunks")
+            chunks = []
+            
+            if chunk_plan and formatted_skeleton:
+                logger.info(f"[MainGraph] Executing Semantic Chunk Plan ({len(chunk_plan)} chunks)...")
+                try:
+                    # 将 plan (基于 skeleton 行号) 映射回 full_text 的 char offsets
+                    lines = raw_text.split('\n')
+                    
+                    # 预计算每行的起始 offset
+                    line_offsets = []
+                    current_offset = 0
+                    for line in lines:
+                        line_offsets.append(current_offset)
+                        current_offset += len(line) + 1 # +1 for newline
+                        
+                    for plan_item in chunk_plan:
+                        start_line = int(plan_item.get("start_line", 0))
+                        end_line = int(plan_item.get("end_line", len(lines)))
+                        
+                        # 边界检查
+                        start_line = max(0, min(start_line, len(lines) - 1))
+                        end_line = max(0, min(end_line, len(lines)))
+                        
+                        start_char = line_offsets[start_line]
+                        # end_line exclude, so calculate end char of end_line - 1
+                        if end_line >= len(lines):
+                            end_char = len(raw_text)
+                        else:
+                            end_char = line_offsets[end_line]
+                            
+                        # 创建 ChunkInfo
+                        # 重新计算 Token
+                        chunk_text = raw_text[start_char:end_char]
+                        token_count = self.chunker.tokenizer(chunk_text)
+                        
+                        chunks.append(ChunkInfo(
+                            title=plan_item.get("title", f"Chunk {len(chunks)+1}"),
+                            start=start_char,
+                            end=end_char,
+                            token_count=token_count
+                        ))
+                        
+                except Exception as e:
+                    logger.error(f"[MainGraph] Failed to execute semantic chunk plan: {e}. Fallback to Regex.")
+                    chunks = []
+            else:
+                 logger.warning(f"[MainGraph] Semantic Chunking skipped. Plan exists: {bool(chunk_plan)}, Skeleton exists: {bool(formatted_skeleton)}")
+                 if chunk_plan:
+                     logger.warning(f"Chunk Plan Preview: {str(chunk_plan)[:200]}")
+                 if formatted_skeleton:
+                     logger.warning(f"Skeleton Preview: {str(formatted_skeleton)[:200]}")
+            
+            if not chunks:
+                logger.info("[MainGraph] Using Regex Chunker (Fallback)...")
+                chunks = self.chunker.plan_chunks(raw_text)
+            
+            logger.info(f"[MainGraph] Finalized {len(chunks)} chunks")
             
             return {
                 "chapter_map": chunks,
@@ -343,7 +477,8 @@ def create_main_graph(
     chunker_config: Optional[ChunkerConfig] = None,
     max_iterations: int = 2,
     source_lang: str = "English",
-    target_lang: str = "Chinese",
+    target_lang: str = "Simplified Chinese",
+    debugger: Optional[TranslationDebugger] = None,
 ) -> MainGraph:
     """创建主图。
     
@@ -357,7 +492,44 @@ def create_main_graph(
     Returns:
         MainGraph 实例
     """
-    client_manager = LLMClientManager(api_key=api_key)
+    # 加载模型配置
+    import yaml
+    from pathlib import Path
+    
+    project_root = Path(__file__).parent.parent.parent
+    config_path = project_root / "config" / "models.yaml"
+    
+    model_overrides = {}
+    timeout = None
+    
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+                if config:
+                    if "models" in config:
+                        for role, settings in config["models"].items():
+                            if "name" in settings:
+                                model_overrides[role] = settings["name"]
+                    
+                    # 读取 API 超时配置
+                    if "api" in config and "request_timeout" in config["api"]:
+                        timeout = config["api"]["request_timeout"]
+                        logger.info(f"Loaded request timeout: {timeout}s")
+                        
+            logger.info(f"Loaded model config from {config_path}")
+            logger.debug(f"Model overrides: {model_overrides}")
+        except Exception as e:
+            logger.warning(f"Failed to load model config: {e}")
+    else:
+        logger.warning(f"Model config not found at {config_path}")
+    
+    # 传递 model_overrides 和 timeout 给 ClientManager
+    client_manager = LLMClientManager(
+        api_key=api_key,
+        model_overrides=model_overrides,
+        timeout=timeout
+    )
     
     return MainGraph(
         client_manager=client_manager,
@@ -365,4 +537,5 @@ def create_main_graph(
         max_iterations=max_iterations,
         source_lang=source_lang,
         target_lang=target_lang,
+        debugger=debugger,
     )

@@ -5,7 +5,7 @@
 Drafter → Critic → Editor 循环协作。
 """
 
-from typing import Dict, Any, Literal
+from typing import Dict, Any, Literal, Optional
 import logging
 
 from langgraph.graph import StateGraph, END
@@ -108,8 +108,8 @@ class TranslationSubgraph:
             }
             
         def edit_node(state: TranslationState) -> Dict:
-            """Editor 节点：润色定稿。"""
-            logger.info(f"[Subgraph] Editor finalizing chunk {state.get('current_chunk_index', 0)}")
+            """Editor 节点：精准修缮 (Surgical Edit)。"""
+            logger.info(f"[Subgraph] Editor applying fixes to chunk {state.get('current_chunk_index', 0)}")
             
             context = {
                 "glossary": self._format_glossary(state.get("glossary", {})),
@@ -117,7 +117,8 @@ class TranslationSubgraph:
                 "target_audience": state.get("target_audience", "一般读者"),
             }
             
-            final = self.editor.process_sync(
+            # Editor takes draft and critique, produces better draft
+            patched_text = self.editor.process_sync(
                 source_text=state["current_source_text"],
                 context=context,
                 draft_translation=state["draft_translation"],
@@ -125,10 +126,12 @@ class TranslationSubgraph:
             )
             
             return {
-                "final_chunk_translation": final,
+                "draft_translation": patched_text, # Update draft for next iteration
+                "final_chunk_translation": patched_text, # Also update final candidate
+                "iteration_count": state.get("iteration_count", 0) + 1,
             }
             
-        def should_continue(state: TranslationState) -> Literal["continue", "finalize"]:
+        def should_continue(state: TranslationState) -> Literal["continue", "end"]:
             """判断是否继续迭代。"""
             critique = state.get("critique_comments", "")
             iteration = state.get("iteration_count", 0)
@@ -136,13 +139,14 @@ class TranslationSubgraph:
             # 检查收敛条件
             if self.critic.check_convergence(critique):
                 logger.info(f"[Subgraph] Converged at iteration {iteration}")
-                return "finalize"
+                return "end"
                 
             # 检查迭代次数
             if iteration >= self.max_iterations:
                 logger.info(f"[Subgraph] Max iterations reached ({iteration})")
-                return "finalize"
-                
+                return "end"
+            
+            # 如果未收敛且未达最大次数，继续修缮
             return "continue"
             
         # 构建图
@@ -158,15 +162,16 @@ class TranslationSubgraph:
         
         # 添加边
         workflow.add_edge("draft", "critique")
+        workflow.add_edge("edit", "critique") # Edit 后再次审查
+        
         workflow.add_conditional_edges(
             "critique",
             should_continue,
             {
-                "continue": "draft",
-                "finalize": "edit",
+                "continue": "edit",
+                "end": END,
             }
         )
-        workflow.add_edge("edit", END)
         
         # 编译图
         return workflow.compile()

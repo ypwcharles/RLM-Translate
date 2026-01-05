@@ -86,6 +86,10 @@ class TranslationState(TypedDict, total=False):
     # === 输出结果 ===
     completed_translations: List[str]
     
+    # === 中间状态传递 ===
+    chunk_plan: List[Dict[str, Any]] # Semantic Chunk Plan from Analyzer
+    formatted_skeleton: List[Dict[str, Any]] # Structure Skeleton from Scanner
+
     # === 错误处理 ===
     errors: List[Dict[str, Any]]
 

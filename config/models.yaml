@@ -6,26 +6,26 @@
 models:
   # Analyzer - 全书扫描，术语/人物/剧情提取
   analyzer:
-    name: "gemini-2.0-flash"
+    name: "gemini-3-pro-preview"
     temperature: 1.0
     purpose: "全书扫描，术语/人物/剧情提取"
     context_window: 1000000
 
   # Drafter (Addition Agent) - 高速初翻
   drafter:
-    name: "gemini-2.0-flash"
+    name: "gemini-3-flash-preview"
     temperature: 1.0
     purpose: "高速初翻 (Addition Agent)"
 
   # Critic (Subtraction Agent) - 深度审查
   critic:
-    name: "gemini-2.0-flash"
+    name: "gemini-3-pro-preview"
     temperature: 1.0
     purpose: "深度审查 (Subtraction Agent)"
 
   # Editor - 润色定稿
   editor:
-    name: "gemini-2.0-flash"
+    name: "gemini-3-flash-preview"
     temperature: 1.0
     purpose: "润色定稿"
 
@@ -51,7 +51,7 @@ api:
   retry_max_wait: 60
   
   # Timeout
-  request_timeout: 120
+  request_timeout: 600
 
 # === 环境变量说明 ===
 # DMXAPI_KEY: DMXAPI 中转站密钥（格式: sk-xxx）

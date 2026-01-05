@@ -4,79 +4,18 @@ Critic Agent - 评审 Agent (Subtraction Agent)
 基于 TransAgents 论文的 Subtraction Agent 设计，负责审查翻译并指出问题。
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import json
+import re
 
 from .base import BaseAgent
 from ..core.client import ChatGoogleGenerativeAI
 
 
-DEFAULT_CRITIC_TEMPLATE = """# Role: Senior Editor (Subtraction Agent)
+from pathlib import Path
 
-You are a senior editor reviewing a translation from {{ source_lang }} to {{ target_lang }}.
-Your role is to identify and flag redundant, inaccurate, or inconsistent content.
-Be critical but constructive.
-
-## Translation Guidelines Reference
-
-### Glossary (translations MUST match exactly)
-{{ glossary }}
-
-{% if style_guide %}
-### Style Guide
-{{ style_guide }}
-{% endif %}
-
-## Original Source Text
-{{ source_text }}
-
-## Draft Translation to Review
-{{ draft_translation }}
-
-## Review Criteria
-
-### 1. Glossary Compliance (Critical)
-- Check if EVERY term from the glossary is translated correctly
-- Flag any deviations with the exact term and expected translation
-
-### 2. Accuracy
-- Identify mistranslations, semantic errors, or altered meanings
-- Check for omissions - any content missing from the original
-- Verify numerical values, names, and proper nouns
-
-### 3. Fluency & Style
-- Flag translation artifacts (translationese, awkward phrasing)
-- Check for consistent character voice and tone
-- Identify overly literal translations that sound unnatural
-
-### 4. Redundancy
-- Identify verbose or repetitive passages not in the original
-- Flag unnecessary additions by the translator
-
-### 5. Cultural Fidelity
-- Check for lost cultural nuances or imagery
-- Verify idioms and metaphors are appropriately adapted
-
-## Output Format
-
-If there are issues to address, structure your feedback as:
-
-### Glossary Issues
-- [Term]: Expected "X", found "Y" (Location: quote the context)
-
-### Accuracy Issues
-- Issue description (Location: quote the problematic text)
-- Suggested fix: ...
-
-### Style Issues
-- Issue description
-- Suggestion: ...
-
-If the translation is excellent with no significant issues, respond ONLY with:
-"No further changes required."
-
-Remember: Be specific and actionable. Quote the exact problematic text.
-"""
-
+# 获取 prompts 目录的绝对路径
+PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
 class CriticAgent(BaseAgent):
     """评审 Agent (Subtraction Agent)。
@@ -108,8 +47,12 @@ class CriticAgent(BaseAgent):
             source_lang: 源语言
             target_lang: 目标语言
             prompt_template: 自定义 Prompt 模板
-            prompt_file: Prompt 模板文件
+            prompt_file: Prompt 模板文件 (默认为 prompts/critic.txt)
         """
+        # 如果未指定 prompt_file 且没有 template，则使用默认文件
+        if not prompt_template and not prompt_file:
+            prompt_file = str(PROMPTS_DIR / "critic.txt")
+            
         super().__init__(
             name="critic",
             client=client,
@@ -121,7 +64,7 @@ class CriticAgent(BaseAgent):
         
     def _get_default_template(self) -> str:
         """获取默认 Prompt 模板。"""
-        return DEFAULT_CRITIC_TEMPLATE
+        return "Error: Prompt template not found."
         
     async def process(
         self,
@@ -184,12 +127,30 @@ class CriticAgent(BaseAgent):
     def check_convergence(self, feedback: str) -> bool:
         """检查是否达到收敛条件。
         
+        对于 JSON 格式反馈：
+        1. 如果是列表 []，则收敛。
+        2. 如果是字典 {"issues": []}，则收敛。
+        
         Args:
             feedback: 审查反馈
             
         Returns:
             是否收敛（无需更多修改）
         """
+        # 尝试解析 JSON
+        try:
+            data = self.parse_json_response(feedback)
+            # Case 1: List (Legacy or simple format)
+            if isinstance(data, list) and len(data) == 0:
+                return True
+            # Case 2: Dict (New format)
+            if isinstance(data, dict):
+                issues = data.get("issues", [])
+                if isinstance(issues, list) and len(issues) == 0:
+                    return True
+        except Exception:
+            pass
+
         convergence_indicators = [
             "no further changes required",
             "no further changes needed",
@@ -201,3 +162,50 @@ class CriticAgent(BaseAgent):
         
         feedback_lower = feedback.lower()
         return any(indicator in feedback_lower for indicator in convergence_indicators)
+
+    def parse_json_response(self, response: str) -> Any:
+        """从 LLM 响应中解析 JSON。
+        
+        Args:
+            response: LLM 响应文本
+            
+        Returns:
+            解析后的 JSON 对象 (List 或 Dict)
+        """
+        # 1. 尝试直接解析
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            pass
+            
+        # 2. 尝试提取 Markdown 代码块 ```json ... ```
+        match = re.search(r"```json\s*(.*?)```", response, re.DOTALL)
+        if match:
+            try:
+                content = match.group(1).strip()
+                return json.loads(content)
+            except json.JSONDecodeError:
+                pass
+                
+        # 3. 尝试提取可能被包裹的 JSON 对象 {...} 或 [...]
+        # 优先寻找最外层的 {} 或 []
+        
+        # 尝试找 {...}
+        match_dict = re.search(r"\{[\s\S]*\}", response)
+        if match_dict:
+             try:
+                content = match_dict.group(0).strip()
+                return json.loads(content)
+             except json.JSONDecodeError:
+                pass
+
+        # 尝试找 [...]
+        match_list = re.search(r"\[[\s\S]*\]", response)
+        if match_list:
+             try:
+                content = match_list.group(0).strip()
+                return json.loads(content)
+             except json.JSONDecodeError:
+                pass
+                
+        return []

@@ -5,7 +5,6 @@ DMXAPI 连接测试脚本
 验证 DMXAPI 中转站连接是否正常工作。
 
 Usage:
-    export DMXAPI_KEY="sk-xxx"
     python scripts/test_dmxapi.py
 """
 
@@ -16,6 +15,13 @@ from pathlib import Path
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+# 自动加载 .env 文件
+try:
+    from dotenv import load_dotenv
+    load_dotenv(project_root / ".env")
+except ImportError:
+    pass  # python-dotenv 未安装则跳过
 
 from src.core.dmxapi_client import DMXAPIClient, DMXAPIClientManager
 

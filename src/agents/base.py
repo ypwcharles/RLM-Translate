@@ -72,6 +72,31 @@ class BaseAgent(ABC):
         template = Template(self.prompt_template)
         return template.render(**kwargs)
         
+    def _extract_content(self, content: Any) -> str:
+        """从响应中提取文本内容。
+        
+        Args:
+            content: 原始响应内容 (str 或 list)
+            
+        Returns:
+            提取后的文本字符串
+        """
+        if isinstance(content, str):
+            return content
+        
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict) and "text" in part:
+                    parts.append(part["text"])
+                elif hasattr(part, "text"): # For objects
+                    parts.append(part.text)
+            return "".join(parts)
+            
+        return str(content)
+
     async def invoke(self, prompt: str) -> str:
         """调用 LLM。
         
@@ -82,7 +107,7 @@ class BaseAgent(ABC):
             LLM 响应
         """
         response = await self.client.ainvoke(prompt)
-        return response.content
+        return self._extract_content(response.content)
         
     def invoke_sync(self, prompt: str) -> str:
         """同步调用 LLM。
@@ -94,7 +119,7 @@ class BaseAgent(ABC):
             LLM 响应
         """
         response = self.client.invoke(prompt)
-        return response.content
+        return self._extract_content(response.content)
         
     @abstractmethod
     async def process(

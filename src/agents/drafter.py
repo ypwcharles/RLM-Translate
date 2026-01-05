@@ -10,55 +10,10 @@ from .base import BaseAgent
 from ..core.client import ChatGoogleGenerativeAI
 
 
-DEFAULT_DRAFTER_TEMPLATE = """# Role: Expert Literary Translator (Addition Agent)
+from pathlib import Path
 
-You are an expert literary translator working from {{ source_lang }} to {{ target_lang }}.
-Your goal is to produce a comprehensive, detailed, and faithful translation.
-
-## Translation Guidelines (Long-Term Memory)
-
-### Glossary (MUST follow exactly)
-{{ glossary }}
-
-### Book Summary
-{{ book_summary }}
-
-### Recent Plot Context (Last chapters)
-{{ plot_summary }}
-
-### Style Guide
-{{ style_guide }}
-
-### Target Audience
-{{ target_audience }}
-
-{% if character_profiles %}
-### Character Profiles
-{{ character_profiles }}
-{% endif %}
-
-## Source Text to Translate
-{{ source_text }}
-
-## Instructions
-1. Translate the ENTIRE source text faithfully - do NOT summarize or omit any content.
-2. STRICTLY follow the glossary mappings above. Every term in the glossary must be translated exactly as specified.
-3. Maintain consistency with the plot context and character development.
-4. Preserve the author's writing style, tone, narrative voice, and cultural nuances.
-5. Translate idioms and metaphors appropriately for the target culture while preserving meaning.
-6. Err on the side of more detail rather than less (Addition principle).
-7. Maintain paragraph structure and formatting of the original.
-
-{% if history %}
-## Previous Iterations
-{{ history }}
-{% endif %}
-
-## Output
-Provide ONLY the translated text. No explanations, no notes, no commentary.
-Do not add translator's notes unless absolutely necessary for comprehension.
-"""
-
+# 获取 prompts 目录的绝对路径
+PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
 class DrafterAgent(BaseAgent):
     """初翻 Agent (Addition Agent)。
@@ -90,8 +45,12 @@ class DrafterAgent(BaseAgent):
             source_lang: 源语言
             target_lang: 目标语言
             prompt_template: 自定义 Prompt 模板
-            prompt_file: Prompt 模板文件
+            prompt_file: Prompt 模板文件 (默认为 prompts/drafter.txt)
         """
+        # 如果未指定 prompt_file 且没有 template，则使用默认文件
+        if not prompt_template and not prompt_file:
+            prompt_file = str(PROMPTS_DIR / "drafter.txt")
+            
         super().__init__(
             name="drafter",
             client=client,
@@ -102,8 +61,11 @@ class DrafterAgent(BaseAgent):
         self.target_lang = target_lang
         
     def _get_default_template(self) -> str:
-        """获取默认 Prompt 模板。"""
-        return DEFAULT_DRAFTER_TEMPLATE
+        """获取默认 Prompt 模板。
+        
+        注意：现在默认通过 prompt_file 加载，此方法作为后备。
+        """
+        return "Error: Prompt template not found."
         
     async def process(
         self,
